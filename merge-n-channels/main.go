@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
 
-func MergeNChannels[T any](channels ...<-chan T) <-chan T {
+// fan-in
+func MergeNChannels[T any](ctx context.Context, channels ...<-chan T) <-chan T {
 	output := make(chan T)
 	wg := &sync.WaitGroup{}
 
@@ -15,8 +17,20 @@ func MergeNChannels[T any](channels ...<-chan T) <-chan T {
 		go func(ch <-chan T) {
 			defer wg.Done()
 
-			for v := range ch {
-				output <- v
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case v, ok := <-ch:
+					if !ok {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case output <- v:
+					}
+				}
 			}
 		}(ch)
 	}
@@ -43,7 +57,7 @@ func main() {
 	go sendFn(6, 10, ch2)
 	go sendFn(11, 15, ch3)
 
-	for v := range MergeNChannels(ch1, ch2, ch3) {
+	for v := range MergeNChannels(context.Background(), ch1, ch2, ch3) {
 		fmt.Println(v)
 	}
 }
